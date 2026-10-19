@@ -15,6 +15,7 @@ local ConfirmBox = require("ui/widget/confirmbox")
 local UIManager = require("ui/uimanager")
 local logger = require("weread.lib.logger")
 local time = require("ui/time")
+local PW2Profile = require("weread.lib.pw2_profile")
 local T = require("ffi/util").template
 
 local Content = require("weread.lib.content")
@@ -459,16 +460,25 @@ function Downloader:_runInterruptible(dl, task)
     if not dl.trapper then return task() end
     local dialog = dl.progress_dialog
     local fingerprint = WorkerSettings.fingerprint(self.settings)
+    local profile_parent = PW2Profile.start()
     local completed, result = dl.trapper:dismissableRunInSubprocess(function()
+        local profile_child = PW2Profile.start(profile_parent)
         local auth_result = WorkerSettings.capture(self.settings)
         local ok, value = xpcall(task, debug.traceback)
-        return { ok = ok, value = value, auth = auth_result() }
+        local auth = auth_result()
+        PW2Profile.finish("child_task", profile_child, { ok = ok and 1 or 0 })
+        return { ok = ok, value = value, auth = auth }
     end, dialog)
+    PW2Profile.finish("subprocess_roundtrip", profile_parent, { ok = completed and 1 or 0 })
     if dialog then dialog.dismiss_callback = nil end
     if dl.cancelled then return nil end
     if not completed then error("could not start download worker") end
     if not result then error("download worker returned no result") end
-    if result.auth then WorkerSettings.merge(self.settings, fingerprint, result.auth) end
+    if result.auth then
+        local profile_auth_merge = PW2Profile.start()
+        WorkerSettings.merge(self.settings, fingerprint, result.auth)
+        PW2Profile.finish("auth_merge", profile_auth_merge)
+    end
     if not result.ok then error(result.value, 0) end
     return result.value
 end

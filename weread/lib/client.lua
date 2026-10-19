@@ -2,6 +2,7 @@ local ltn12 = require("ltn12")
 local logger = require("weread.lib.logger")
 local socketutil = require("socketutil")
 local http = require("socket.http")
+local PW2Profile = require("weread.lib.pw2_profile")
 local Cookie = require("weread.lib.cookie")
 local WeRead = require("weread.lib.protocol")
 
@@ -291,8 +292,9 @@ function Client:request(opts)
         is_handle_cookie = false
     end
 
-    local results = { pcall(http.request, req_opts) }
+    local results = PW2Profile.http_request(http, req_opts)
     socketutil:reset_timeout()
+    local profile_postprocess = PW2Profile.start()
     if not results[1] then
         logger.err(
             "HTTP transport failed:",
@@ -335,6 +337,10 @@ function Client:request(opts)
         }, type(response) == "string" and response or "")
     end
 
+    PW2Profile.finish("http_postprocess", profile_postprocess, {
+        kind = PW2Profile.kind(opts.url), status = code or 0,
+        bytes = type(response) == "string" and #response or 0,
+    })
     return response, code, resp_headers or {}, status
 end
 

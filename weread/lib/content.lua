@@ -2,6 +2,7 @@ local Crypto = require("weread.lib.crypto")
 local ReaderState = require("weread.lib.reader_state")
 local WeRead = require("weread.lib.protocol")
 local logger = require("weread.lib.logger")
+local PW2Profile = require("weread.lib.pw2_profile")
 
 local Content = {}
 local b64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
@@ -396,6 +397,7 @@ local function full_download_chapter_xhtml(chapter, chapter_index, xhtml)
 end
 
 function Content.save_full_download_chapter(workspace, chapter, chapter_index, xhtml)
+    local profile_checkpoint = PW2Profile.start()
     local path = Content.full_download_chapter_path(workspace, chapter, chapter_index)
     local checkpoint_path = Content.full_download_checkpoint_path(workspace, chapter, chapter_index)
     if not path or not checkpoint_path then return nil, "missing full-book workspace" end
@@ -410,6 +412,7 @@ function Content.save_full_download_chapter(workspace, chapter, chapter_index, x
     }, "\n")
     ok, err = atomic_write(checkpoint_path, checkpoint)
     if not ok then error(err or "could not checkpoint chapter metadata") end
+    PW2Profile.finish("checkpoint_write", profile_checkpoint, { bytes = #chapter_xhtml })
     return path
 end
 
@@ -577,6 +580,7 @@ local function commit_file(part_path, path)
 end
 
 local function write_epub(path, entries)
+    local profile_epub = PW2Profile.start()
     local Archiver = require("ffi/archiver")
     local archive = Archiver.Writer:new{}
     local part_path = path .. ".part"
@@ -624,6 +628,7 @@ local function write_epub(path, entries)
         pcall(os.remove, part_path)
         error(commit_err or "failed to commit EPUB", 0)
     end
+    PW2Profile.finish("epub_write", profile_epub, { entries = #entries })
 end
 
 local function append_asset_entries(entries, assets)
@@ -709,7 +714,9 @@ local function checked_body(response_text)
     end
     local expected = response_text:sub(1, 32)
     local body = response_text:sub(33)
+    local profile_md5 = PW2Profile.start()
     local actual = Crypto.md5_hex(body):upper()
+    PW2Profile.finish("shard_md5", profile_md5, { bytes = #body })
     if actual ~= expected then
         error("Shard MD5 mismatch")
     end
@@ -805,8 +812,13 @@ local function decode_encoded_body(body)
         return ""
     end
     local encoded = body:sub(2)
+    local profile_swaps = PW2Profile.start()
     local restored = reverse_swaps(encoded, swap_positions(encoded))
-    return base64_decode(restored)
+    PW2Profile.finish("reverse_swaps", profile_swaps, { bytes = #encoded })
+    local profile_base64 = PW2Profile.start()
+    local decoded = base64_decode(restored)
+    PW2Profile.finish("base64_decode", profile_base64, { bytes = #restored, output_bytes = #decoded })
+    return decoded
 end
 
 function Content.decode_content_shards(e0, e1, e3)
@@ -1476,9 +1488,11 @@ function Content.ensure_reader_state(client, book)
     local book_id = book.book_id or book.bookId
     local reader_url = book.reader_url or WeRead.reader_url(book_id)
     local reader_html = client:get_text(reader_url, { referer = reader_url })
+    local profile_reader_parse = PW2Profile.start()
     local state = Content.extract_reader_state(reader_html, function(encoded)
         return client:json_decode(encoded)
     end)
+    PW2Profile.finish("reader_parse", profile_reader_parse, { bytes = #reader_html })
     book.book_id = book.book_id or state.book_id or book.bookId
     book.title = book.title or state.title
     book.author = book.author or state.author
@@ -1531,10 +1545,13 @@ function Content.fetch_chapter_shard(client, _settings, book, chapter, endpoint)
 
     local chapter_url = WeRead.reader_url(book_id, chapter.chapterUid)
     local is_style_shard = endpoint:find("/e_2", 1, true) ~= nil
+    local profile_params = PW2Profile.start()
     local params = WeRead.make_content_params(book_id, chapter.chapterUid, book.psvts, {
         sc = 1,
         style = is_style_shard,
     })
+    local encoded_params = client:json_encode(params)
+    PW2Profile.finish("content_params", profile_params, { bytes = #encoded_params })
     local text, code = client:request({
         url = "https://weread.qq.com" .. endpoint,
         method = "POST",
@@ -1543,7 +1560,7 @@ function Content.fetch_chapter_shard(client, _settings, book, chapter, endpoint)
             ["Origin"] = "https://weread.qq.com",
             ["Referer"] = chapter_url,
         },
-        body = client:json_encode(params),
+        body = encoded_params,
     })
     if not code or code < 200 or code >= 300 then
         error(endpoint .. " failed: HTTP " .. tostring(code or "unknown"))
@@ -1717,6 +1734,7 @@ end
 
 function Content.cache_annotation_source(settings, book, chapter, xhtml, raw_text)
     if book._content_format == "txt" and not raw_text then return end
+    local profile_source_cache = PW2Profile.start()
     local ok, err = pcall(function()
         local Source = require("weread.lib.annotation_source")
         require("weread.lib.annotation_store"):new(settings):put(
@@ -1724,6 +1742,7 @@ function Content.cache_annotation_source(settings, book, chapter, xhtml, raw_tex
             raw_text and Source.plain(xhtml) or Source.index(xhtml),
             tostring(chapter.chapterUid or chapter.chapterId))
     end)
+    PW2Profile.finish("annotation_source_cache", profile_source_cache, { bytes = #xhtml, ok = ok and 1 or 0 })
     -- A cache failure must not turn a successful text download into a failure.
     if not ok then logger.warn("annotation source cache:", tostring(err)) end
 end
