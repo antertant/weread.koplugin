@@ -15,34 +15,36 @@ end
 
 function Source.index(html)
     html = html:gsub("^\239\187\191", "")
-    local spans, offset, i, start, pieces = {}, 0, 1, nil, {}
+    local spans, offset, i, start, start_byte = {}, 0, 1, nil, nil
     local in_tag, quote, suppressed = false, nil, nil
-    local tag = {}
+    local tag_start
     local function flush()
-        if start then spans[#spans + 1] = { start, offset, table.concat(pieces) } end
-        start, pieces = nil, {}
+        if start then spans[#spans + 1] = { start, offset, html:sub(start_byte, i - 1) } end
+        start, start_byte = nil, nil
     end
     while i <= #html do
         local size = length(html:byte(i))
-        local char = html:sub(i, i + size - 1)
+        -- ASCII syntax bytes can be tested without allocating a string for
+        -- every rune. Text remains a contiguous slice with identical offsets.
+        local byte = html:byte(i)
         if in_tag then
-            tag[#tag + 1] = char
             if quote then
-                if char == quote then quote = nil end
-            elseif char == '"' or char == "'" then quote = char
-            elseif char == ">" then
+                if byte == quote then quote = nil end
+            elseif byte == 34 or byte == 39 then quote = byte
+            elseif byte == 62 then
                 in_tag = false
-                local name = table.concat(tag):lower()
+                -- These anchored tag-name patterns need at most eight bytes,
+                -- not a copy of possibly enormous attribute values.
+                local name = html:sub(tag_start, math.min(i, tag_start + 7)):lower()
                 if name:match("^/?script[%s>]") or name:match("^/?style[%s>]") then
                     suppressed = name:sub(1, 1) ~= "/" or nil
                 end
             end
-        elseif char == "<" then
+        elseif byte == 60 then
             flush()
-            in_tag, tag = true, {}
+            in_tag, tag_start = true, i + 1
         elseif not suppressed then
-            start = start or offset
-            pieces[#pieces + 1] = char
+            if not start then start, start_byte = offset, i end
         end
         i, offset = i + size, offset + 1
     end

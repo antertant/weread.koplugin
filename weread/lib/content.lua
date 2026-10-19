@@ -3,6 +3,7 @@ local ReaderState = require("weread.lib.reader_state")
 local WeRead = require("weread.lib.protocol")
 local logger = require("weread.lib.logger")
 local PW2Profile = require("weread.lib.pw2_profile")
+local PW2Freeze = require("weread.lib.pw2_freeze")
 
 local Content = {}
 local native_base64
@@ -732,38 +733,42 @@ local function checked_body(response_text)
 end
 
 local function base64_decode(data)
-    data = data:gsub("-", "+"):gsub("_", "/")
+    if data:find("-", 1, true) then data = data:gsub("-", "+") end
+    if data:find("_", 1, true) then data = data:gsub("_", "/") end
     local pad = #data % 4
     if pad > 0 then
         data = data .. string.rep("=", 4 - pad)
     end
-    data = data:gsub("[^" .. b64chars .. "=]", "")
+    if data:find("[^" .. b64chars .. "=]") then
+        data = data:gsub("[^" .. b64chars .. "=]", "")
+    end
     if native_base64 then
         local ok, decoded = pcall(native_base64, data)
         if ok and type(decoded) == "string" then return decoded, 1 end
     end
-    return (data:gsub(".", function(char)
-        if char == "=" then
-            return ""
-        end
-        local bits = ""
-        local index = b64chars:find(char, 1, true) - 1
-        for bit = 6, 1, -1 do
-            bits = bits .. (index % 2 ^ bit - index % 2 ^ (bit - 1) > 0 and "1" or "0")
-        end
-        return bits
-    end):gsub("%d%d%d?%d?%d?%d?%d?%d?", function(bits)
-        if #bits ~= 8 then
-            return ""
-        end
-        local byte = 0
-        for i = 1, 8 do
-            if bits:sub(i, i) == "1" then
-                byte = byte + 2 ^ (8 - i)
+    -- Bounded fallback: never materialize the whole input as a 6x bit string
+    -- or one Lua array element per output byte. Ignore '=' as before.
+    local values = {}
+    for i = 1, #b64chars do values[b64chars:byte(i)] = i - 1 end
+    local chunks, bytes, accumulator, bits = {}, {}, 0, 0
+    for i = 1, #data do
+        local value = values[data:byte(i)]
+        if value then
+            accumulator, bits = accumulator * 64 + value, bits + 6
+            if bits >= 8 then
+                bits = bits - 8
+                local divisor = 2 ^ bits
+                bytes[#bytes + 1] = string.char(math.floor(accumulator / divisor))
+                accumulator = accumulator % divisor
+                if #bytes == 4096 then
+                    chunks[#chunks + 1] = table.concat(bytes)
+                    bytes = {}
+                end
             end
         end
-        return string.char(byte)
-    end))
+    end
+    if #bytes > 0 then chunks[#chunks + 1] = table.concat(bytes) end
+    return table.concat(chunks)
 end
 
 local function swap_positions(encoded)
@@ -805,18 +810,30 @@ local function swap_positions(encoded)
 end
 
 local function reverse_swaps(encoded, positions)
-    local chars = {}
-    for i = 1, #encoded do
-        chars[i] = encoded:sub(i, i)
-    end
+    -- Only the swapped positions need mutable storage (at most 20 bytes for
+    -- the protocol's ten position entries). Preserve sequential overlap.
+    local changed = {}
     for i = #positions, 1, -2 do
         for k = 1, 0, -1 do
             local left = positions[i] + k + 1
             local right = positions[i - 1] + k + 1
-            chars[left], chars[right] = chars[right], chars[left]
+            local l = changed[left] or encoded:sub(left, left)
+            local r = changed[right] or encoded:sub(right, right)
+            changed[left], changed[right] = r, l
         end
     end
-    return table.concat(chars)
+    local keys = {}
+    for key in pairs(changed) do keys[#keys + 1] = key end
+    if #keys == 0 then return encoded end
+    table.sort(keys)
+    local pieces, cursor = {}, 1
+    for _, key in ipairs(keys) do
+        if key > cursor then pieces[#pieces + 1] = encoded:sub(cursor, key - 1) end
+        pieces[#pieces + 1] = changed[key]
+        cursor = key + 1
+    end
+    if cursor <= #encoded then pieces[#pieces + 1] = encoded:sub(cursor) end
+    return table.concat(pieces)
 end
 
 local function decode_encoded_body(body)
@@ -824,11 +841,15 @@ local function decode_encoded_body(body)
         return ""
     end
     local encoded = body:sub(2)
+    PW2Freeze.event("processing_begin", "reverse_swaps", 0, #encoded)
     local profile_swaps = PW2Profile.start()
     local restored = reverse_swaps(encoded, swap_positions(encoded))
+    PW2Freeze.event("processing_end", "reverse_swaps", 0, #restored)
     PW2Profile.finish("reverse_swaps", profile_swaps, { bytes = #encoded })
     local profile_base64 = PW2Profile.start()
+    PW2Freeze.event("processing_begin", "base64", 0, #restored)
     local decoded, native = base64_decode(restored)
+    PW2Freeze.event("processing_end", "base64", 0, #decoded)
     PW2Profile.finish("base64_decode", profile_base64, { bytes = #restored, output_bytes = #decoded, native = native or 0 })
     return decoded
 end
@@ -1749,10 +1770,18 @@ function Content.cache_annotation_source(settings, book, chapter, xhtml, raw_tex
     local profile_source_cache = PW2Profile.start()
     local ok, err = pcall(function()
         local Source = require("weread.lib.annotation_source")
+        -- The fetched/checked/decoded shard strings are no longer needed here.
+        -- Reclaim their transient storage before indexing a large chapter.
+        if #xhtml >= 256 * 1024 then collectgarbage("collect") end
+        PW2Freeze.event("processing_begin", "source_index", tonumber(chapter.chapterUid), #xhtml)
+        local source = raw_text and Source.plain(xhtml) or Source.index(xhtml)
+        PW2Freeze.event("processing_end", "source_index", tonumber(chapter.chapterUid), #source)
+        PW2Freeze.event("processing_begin", "source_store", tonumber(chapter.chapterUid), #source)
         require("weread.lib.annotation_store"):new(settings):put(
             book.book_id or book.bookId, "original", tostring(chapter.chapterUid or chapter.chapterId),
-            raw_text and Source.plain(xhtml) or Source.index(xhtml),
+            source,
             tostring(chapter.chapterUid or chapter.chapterId))
+        PW2Freeze.event("processing_end", "source_store", tonumber(chapter.chapterUid), #source)
     end)
     PW2Profile.finish("annotation_source_cache", profile_source_cache, { bytes = #xhtml, ok = ok and 1 or 0 })
     -- A cache failure must not turn a successful text download into a failure.

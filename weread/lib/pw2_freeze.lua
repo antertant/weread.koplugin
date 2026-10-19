@@ -19,9 +19,11 @@ local module_path = debug.getinfo(1, "S").source:sub(2)
 local script_path = module_path:gsub("pw2_freeze%.lua$", "pw2_freeze_monitor.sh")
 local labels = { worker=true, connect=true, source=true, finalize=true,
     reader_page=true, catalog=true, gateway=true, other=true,
-    e_0=true, e_1=true, e_2=true, e_3=true, t_0=true, t_1=true, t_2=true, t_3=true }
+    e_0=true, e_1=true, e_2=true, e_3=true, t_0=true, t_1=true, t_2=true, t_3=true,
+    reverse_swaps=true, base64=true, source_index=true, source_store=true }
 local events = { job_start=true, job_end=true, worker_begin=true,
-    child_begin=true, child_end=true, worker_return=true, http_begin=true, http_end=true }
+    child_begin=true, child_end=true, worker_return=true, http_begin=true, http_end=true,
+    processing_begin=true, processing_end=true }
 local function pid()
     local ok, value = pcall(function() return require("ffi").C.getpid() end)
     return ok and tonumber(value) or 0
