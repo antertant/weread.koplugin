@@ -3,6 +3,7 @@ local logger = require("weread.lib.logger")
 local socketutil = require("socketutil")
 local http = require("socket.http")
 local PW2Profile = require("weread.lib.pw2_profile")
+local PW2Transport = require("weread.lib.pw2_transport")
 local Cookie = require("weread.lib.cookie")
 local WeRead = require("weread.lib.protocol")
 
@@ -292,7 +293,7 @@ function Client:request(opts)
         is_handle_cookie = false
     end
 
-    local results = PW2Profile.http_request(http, req_opts)
+    local results = PW2Transport.request(http, req_opts)
     socketutil:reset_timeout()
     local profile_postprocess = PW2Profile.start()
     if not results[1] then
