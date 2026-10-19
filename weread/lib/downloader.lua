@@ -660,12 +660,16 @@ function Downloader:start(book, chapters, suffix, options)
         end
         local ok_init, err_init = pcall(function()
             self:_setStage(dl, _("Connecting to WeRead..."))
-            local updated = self:_runInterruptible(dl, function()
-                Content.ensure_reader_state(self.client, book)
-                return reader_book(book)
-            end)
-            if dl.cancelled then return end
-            apply_reader_book(book, updated)
+            -- Single-chapter source fetching refreshes the chapter session itself.
+            -- Fetching a book reader page here duplicates that request and worker.
+            if not dl.single_chapter then
+                local updated = self:_runInterruptible(dl, function()
+                    Content.ensure_reader_state(self.client, book)
+                    return reader_book(book)
+                end)
+                if dl.cancelled then return end
+                apply_reader_book(book, updated)
+            end
             self:_setStage(dl, _("Preparing download..."))
             local cache = self.settings.get
                 and self.settings:get("cache", {}) or {}
