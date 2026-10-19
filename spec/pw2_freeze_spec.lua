@@ -2,7 +2,7 @@ package.path = "./?.lua;" .. package.path
 local opened, output, commands = {}, {}, {}
 local pid = 123
 local saved_open, saved_execute = io.open, os.execute
-io.open = function(path, mode)
+rawset(io, "open", function(path, mode)
     opened[#opened + 1] = path
     if path == "synthetic/weread-pw2-freeze.enabled" then return { close = function() end } end
     if mode == "ab" or mode == "wb" then
@@ -11,8 +11,8 @@ io.open = function(path, mode)
         end, close = function() end }
     end
     return nil
-end
-os.execute = function(command) commands[#commands + 1] = command; return 0 end
+end)
+rawset(os, "execute", function(command) commands[#commands + 1] = command; return 0 end)
 package.preload.datastorage = function() return { getSettingsDir = function() return "synthetic" end } end
 package.preload.socket = function() return { gettime = function() return 100 end } end
 package.preload["libs/libkoreader-lfs"] = function()
@@ -36,8 +36,9 @@ for _, row in ipairs(output) do
     if row.path:match("/stop$") then stopped = true end
 end
 assert(stopped)
-io.open = function() return nil end
+rawset(io, "open", function() return nil end)
 Trace.start({ total = 1 }); Trace.event("http_begin", "other"); Trace.stop(dl)
-io.open, os.execute = saved_open, saved_execute
+rawset(io, "open", saved_open)
+rawset(os, "execute", saved_execute)
 assert(#opened > 1)
 print("pw2_freeze_spec: opt-in observer, PID ownership, privacy and safe diagnostic failure passed")

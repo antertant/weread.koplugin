@@ -764,7 +764,7 @@ local function base64_decode(data)
                 chunks[#chunks + 1] = decoded
             end
             if success then return table.concat(chunks), 1 end
-            chunks = nil
+            chunks = nil -- luacheck: ignore 311
             collectgarbage("collect")
         else
             local ok, decoded = pcall(native_base64, data)
@@ -866,7 +866,8 @@ local function decode_encoded_body(body)
         return ""
     end
     local encoded = body:sub(2)
-    body = nil -- Do not retain a second full chapter string through Base64.
+    -- Do not retain a second full chapter string through Base64.
+    body = nil -- luacheck: ignore 311
     PW2Freeze.event("processing_begin", "reverse_swaps", 0, #encoded)
     local profile_swaps = PW2Profile.start()
     local restored = reverse_swaps(encoded, swap_positions(encoded))
@@ -874,7 +875,7 @@ local function decode_encoded_body(body)
     PW2Profile.finish("reverse_swaps", profile_swaps, { bytes = #encoded })
     -- Drop original encoded input and sparse-assembly temporary slices before
     -- MIME allocates its output; they are not needed after swaps are reversed.
-    encoded = nil
+    encoded = nil -- luacheck: ignore 311
     if #restored >= 256 * 1024 then collectgarbage("collect") end
     local profile_base64 = PW2Profile.start()
     PW2Freeze.event("processing_begin", "base64", 0, #restored)

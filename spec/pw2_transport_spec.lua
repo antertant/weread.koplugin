@@ -1,16 +1,16 @@
 package.path = "./?.lua;" .. package.path
 local saved_open = io.open
-io.open = function(path, ...)
+rawset(io, "open", function(path, ...)
     if path == "synthetic/weread-pw2-keepalive.enabled" then return { close = function() end } end
     if path == "synthetic/weread-pw2-profile.enabled" then return nil end
     return saved_open(path, ...)
-end
+end)
 package.preload.datastorage = function() return { getSettingsDir = function() return "synthetic" end } end
 package.preload.socket = function() return { gettime = function() return 100 end } end
 local pid = 101
 package.loaded.ffi = { C = { getpid = function() return pid end } }
 local Transport = require("weread.lib.pw2_transport")
-io.open = saved_open
+rawset(io, "open", saved_open)
 local opens, closes, requests = 0, 0, 0
 local behavior = "ok"
 local http = {}

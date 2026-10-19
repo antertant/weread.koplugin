@@ -11,7 +11,7 @@ local marker = directory and io.open(directory .. "/weread-pw2-profile.enabled",
 Profile.enabled = marker ~= nil and ok_socket and type(socket.gettime) == "function"
 if marker then marker:close() end
 local sequence = 0
-local unpack_values = unpack or table.unpack
+local unpack_values = unpack -- KOReader runs on LuaJIT (Lua 5.1 API).
 local function pack(...) return { n = select("#", ...), ... } end
 local function pid()
     local ok, result = pcall(function() return require("ffi").C.getpid() end)
