@@ -410,7 +410,11 @@ function Content.save_full_download_chapter(workspace, chapter, chapter_index, x
     local path = Content.full_download_chapter_path(workspace, chapter, chapter_index)
     local checkpoint_path = Content.full_download_checkpoint_path(workspace, chapter, chapter_index)
     if not path or not checkpoint_path then return nil, "missing full-book workspace" end
+    PW2Freeze.event("processing_begin", "checkpoint_render", chapter_index, #xhtml)
+    if #xhtml >= 256 * 1024 then collectgarbage("collect") end
     local chapter_xhtml = full_download_chapter_xhtml(chapter, chapter_index, xhtml)
+    PW2Freeze.event("processing_end", "checkpoint_render", chapter_index, #chapter_xhtml)
+    PW2Freeze.event("processing_begin", "checkpoint_write", chapter_index, #chapter_xhtml)
     local ok, err = atomic_write(path, chapter_xhtml)
     if not ok then error(err or "could not checkpoint chapter") end
     local checkpoint = table.concat({
@@ -421,6 +425,7 @@ function Content.save_full_download_chapter(workspace, chapter, chapter_index, x
     }, "\n")
     ok, err = atomic_write(checkpoint_path, checkpoint)
     if not ok then error(err or "could not checkpoint chapter metadata") end
+    PW2Freeze.event("processing_end", "checkpoint_write", chapter_index, #chapter_xhtml)
     PW2Profile.finish("checkpoint_write", profile_checkpoint, { bytes = #chapter_xhtml })
     return path
 end
@@ -691,23 +696,25 @@ end
 body_fragment = function(xhtml)
     xhtml = tostring(xhtml or "")
     local bodies = {}
-    local remaining = xhtml
-    while remaining ~= "" do
-        local body_start = remaining:find("<body", 1, true)
+    -- Keep a cursor into the original string. Copying the remaining suffix
+    -- for each concatenated document creates quadratic allocation traffic.
+    local cursor = 1
+    while cursor <= #xhtml do
+        local body_start = xhtml:find("<body", cursor, true)
         if not body_start then
             break
         end
-        local body_open_end = remaining:find(">", body_start, true)
+        local body_open_end = xhtml:find(">", body_start, true)
         if not body_open_end then
             break
         end
-        local body_close = remaining:find("</body>", body_open_end, true)
+        local body_close = xhtml:find("</body>", body_open_end, true)
         if not body_close then
-            bodies[#bodies + 1] = remaining:sub(body_open_end + 1)
+            bodies[#bodies + 1] = xhtml:sub(body_open_end + 1)
             break
         end
-        bodies[#bodies + 1] = remaining:sub(body_open_end + 1, body_close - 1)
-        remaining = remaining:sub(body_close + 7)
+        bodies[#bodies + 1] = xhtml:sub(body_open_end + 1, body_close - 1)
+        cursor = body_close + 7
     end
     if #bodies > 0 then
         return table.concat(bodies, "\n")
