@@ -16,6 +16,7 @@ local UIManager = require("ui/uimanager")
 local logger = require("weread.lib.logger")
 local time = require("ui/time")
 local PW2Profile = require("weread.lib.pw2_profile")
+local PW2Freeze = require("weread.lib.pw2_freeze")
 local T = require("ffi/util").template
 
 local Content = require("weread.lib.content")
@@ -180,6 +181,7 @@ function Downloader:_notifyCompletion(dl, ok, value)
 end
 
 function Downloader:_finishJob(dl)
+    PW2Freeze.stop(dl)
     if self._active_job == dl then
         self._active_job = nil
     end
@@ -461,14 +463,21 @@ function Downloader:_runInterruptible(dl, task)
     local dialog = dl.progress_dialog
     local fingerprint = WorkerSettings.fingerprint(self.settings)
     local profile_parent = PW2Profile.start()
+    dl._pw2_worker_id = (dl._pw2_worker_id or 0) + 1
+    local trace_id = dl._pw2_worker_id
+    local trace_phase = dl._pw2_phase or "worker"
+    PW2Freeze.event("worker_begin", trace_phase, dl.index, trace_id)
     local completed, result = dl.trapper:dismissableRunInSubprocess(function()
+        PW2Freeze.event("child_begin", trace_phase, dl.index, trace_id)
         local profile_child = PW2Profile.start(profile_parent)
         local auth_result = WorkerSettings.capture(self.settings)
         local ok, value = xpcall(task, debug.traceback)
         local auth = auth_result()
+        PW2Freeze.event("child_end", trace_phase, dl.index, trace_id)
         PW2Profile.finish("child_task", profile_child, { ok = ok and 1 or 0 })
         return { ok = ok, value = value, auth = auth }
     end, dialog)
+    PW2Freeze.event("worker_return", trace_phase, dl.index, trace_id)
     PW2Profile.finish("subprocess_roundtrip", profile_parent, { ok = completed and 1 or 0 })
     if dialog then dialog.dismiss_callback = nil end
     if dl.cancelled then return nil end
@@ -626,6 +635,7 @@ function Downloader:start(book, chapters, suffix, options)
         auth_fingerprint = WorkerSettings.fingerprint(self.settings),
     }
     self._active_job = dl
+    if not dl.prefetch then PW2Freeze.start(dl) end
 
     local task_label = options.single_chapter and _("Download chapter and read") or _("Download full book")
     local task_runner = function(callback)
@@ -653,6 +663,7 @@ function Downloader:start(book, chapters, suffix, options)
         return true
     end
     local function initializeDownload()
+        dl._pw2_phase = "connect"
         if dl.cancelled then
             self:_notifyCompletion(dl, false, dl.cancel_reason or "cancelled")
             self:_finishJob(dl)
@@ -963,6 +974,7 @@ function Downloader:_startFootnotes(dl)
 end
 
 function Downloader:_finishChapter(dl)
+    dl._pw2_phase = "finalize"
     if dl.cancelled then self:_step(dl); return end
     if not dl.current then return end
     local chapter = dl.current.chapter
@@ -1326,6 +1338,7 @@ function Downloader:_step(dl)
     if dl.resumable and self:_skipCompletedChapterBatch(dl) then return end
 
     local chapter = dl.chapters[dl.index]
+    dl._pw2_phase = "source"
     self:_setStage(dl,
         T(_("Downloading chapter %1/%2: %3"), tostring(dl.index), tostring(dl.total),
             chapter.title or tostring(chapter.chapterUid)),
