@@ -29,7 +29,8 @@ while [ "$trace_count" -lt 720 ]; do
     awk '/^cpu / || /^ctxt / || /^processes / || /^procs_running / || /^procs_blocked / {print "CPU " $0}' /proc/stat
     awk '/^(MemTotal|MemFree|MemAvailable|Buffers|Cached|SwapCached|AnonPages|Shmem|Slab|SReclaimable|SUnreclaim|Dirty|Writeback|PageTables|SwapTotal|SwapFree):/ {print "MEM " $0}' /proc/meminfo
     awk '/^(pgpgin|pgpgout|pswpin|pswpout|pgfault|pgmajfault|allocstall|oom_kill|pgscan.*|pgsteal.*|compact_stall) / {print "VM " $0}' /proc/vmstat
-    printf 'FILE_NR '; read -r trace_files < /proc/sys/fs/file-nr; echo "$trace_files"
+    # This sysctl does not support ash's byte-at-a-time read on some kernels.
+    printf 'FILE_NR '; cat /proc/sys/fs/file-nr
     printf 'SYSLOG_BYTES '; stat -c %s /var/log/messages 2>/dev/null
     for trace_proc in /proc/[0-9]*; do
         [ -r "$trace_proc/comm" ] || continue

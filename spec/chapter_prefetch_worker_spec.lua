@@ -3,17 +3,15 @@ package.path = "./?.lua;" .. package.path
 local calls = {}
 package.preload["weread.lib.content"] = function()
     return {
-        ensure_reader_state = function(_client, book)
-            calls[#calls + 1] = "reader"
-            book.reader_url = "https://reader/book"
-        end,
+        ensure_reader_state = function() error("redundant initial reader request") end,
         create_download_workspace = function()
             calls[#calls + 1] = "workspace"
             return { path = "/tmp/work", incoming_dir = "/tmp/work/in",
                 asset_dir = "/tmp/work/images" }
         end,
-        fetch_single_chapter_source = function(_client, settings)
+        fetch_single_chapter_source = function(_client, settings, book)
             calls[#calls + 1] = "source"
+            book.reader_url = "https://reader/book"
             settings:update_auth({ wr_ticket = "renewed" })
             return "<p>body</p>"
         end,
@@ -82,7 +80,7 @@ assert(result.annotation_document and result.annotation_document.clean)
 assert(result.auth and result.auth.wr_ticket == "renewed")
 assert(flushes == 0, "child worker must not flush parent LuaSettings")
 assert(table.concat(calls, ",")
-    == "reader,workspace,source,images,epub,cleanup")
+    == "workspace,source,images,epub,cleanup")
 assert(table.concat(progress, ",")
     == "reader,source,images,footnotes,epub")
 

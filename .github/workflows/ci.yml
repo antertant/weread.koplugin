@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - pw2-download-optimizations
 
 jobs:
   checks:
@@ -23,6 +24,9 @@ jobs:
 
       - name: Lua namespace policy
         run: bash scripts/check_lua_namespace.sh
+
+      - name: PW2 observer shell syntax
+        run: sh -n weread/lib/pw2_freeze_monitor.sh
 
       - name: Lua static analysis
         run: luacheck main.lua _meta.lua weread spec
