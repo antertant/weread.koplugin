@@ -1,6 +1,7 @@
 local I18n = {}
 
 local zh = {
+    ["Download worker exited unexpectedly. Download paused; completed chapters were kept. Restart KOReader before resuming."] = "下载进程异常退出，已暂停下载并保留完成的章节。请重启 KOReader 后继续下载。",
     ["Get thoughts (%1 chapters)"] = "获取想法（%1章）",
     ["Continue matching · %1/%2 chapters, %3 underlines"] = "继续匹配 · %1/%2 章，%3 条划线",
     ["Underlines and thoughts management"] = "划线和想法管理",

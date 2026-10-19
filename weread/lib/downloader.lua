@@ -805,6 +805,15 @@ function Downloader:_skipCompletedChapterBatch(dl)
 end
 
 function Downloader:_retryChapterSource(dl, err)
+    -- A vanished full-book worker may have been OOM-killed. Repeating the
+    -- same allocation immediately can turn a recoverable exit into a system
+    -- stall. Preserve all checkpoints instead; ordinary request errors retain
+    -- their existing retry policy. Do not report this as a confirmed OOM.
+    if dl.resumable and tostring(err):find("download worker returned no result", 1, true) then
+        self:_preserveWorkspace(dl, "download_worker_exited")
+        self.show_info(_("Download worker exited unexpectedly. Download paused; completed chapters were kept. Restart KOReader before resuming."))
+        return false
+    end
     local chapter = dl.chapters[dl.index]
     local uid = tostring(chapter and chapter.chapterUid or dl.index)
     dl.chapter_source_retries = dl.chapter_source_retries or {}
