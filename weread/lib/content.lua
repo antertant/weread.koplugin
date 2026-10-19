@@ -750,8 +750,26 @@ local function base64_decode(data)
         data = data:gsub("[^" .. b64chars .. "=]", "")
     end
     if native_base64 then
-        local ok, decoded = pcall(native_base64, data)
-        if ok and type(decoded) == "string" then return decoded, 1 end
+        -- Native MIME may grow a large temporary Lua buffer when decoding a
+        -- whole chapter. Valid, padded Base64 can be split on quartet boundaries.
+        -- Keep the original single-call semantics for malformed/internal padding.
+        local first_pad = data:find("=", 1, true)
+        local trailing_pad = not first_pad or
+            (first_pad >= #data - 1 and data:sub(first_pad):match("^=+$") ~= nil)
+        if #data > 65536 and #data % 4 == 0 and trailing_pad then
+            local chunks, success = {}, true
+            for at = 1, #data, 65536 do
+                local ok, decoded = pcall(native_base64, data:sub(at, at + 65535))
+                if not ok or type(decoded) ~= "string" then success = false; break end
+                chunks[#chunks + 1] = decoded
+            end
+            if success then return table.concat(chunks), 1 end
+            chunks = nil
+            collectgarbage("collect")
+        else
+            local ok, decoded = pcall(native_base64, data)
+            if ok and type(decoded) == "string" then return decoded, 1 end
+        end
     end
     -- Bounded fallback: never materialize the whole input as a 6x bit string
     -- or one Lua array element per output byte. Ignore '=' as before.
@@ -848,11 +866,16 @@ local function decode_encoded_body(body)
         return ""
     end
     local encoded = body:sub(2)
+    body = nil -- Do not retain a second full chapter string through Base64.
     PW2Freeze.event("processing_begin", "reverse_swaps", 0, #encoded)
     local profile_swaps = PW2Profile.start()
     local restored = reverse_swaps(encoded, swap_positions(encoded))
     PW2Freeze.event("processing_end", "reverse_swaps", 0, #restored)
     PW2Profile.finish("reverse_swaps", profile_swaps, { bytes = #encoded })
+    -- Drop original encoded input and sparse-assembly temporary slices before
+    -- MIME allocates its output; they are not needed after swaps are reversed.
+    encoded = nil
+    if #restored >= 256 * 1024 then collectgarbage("collect") end
     local profile_base64 = PW2Profile.start()
     PW2Freeze.event("processing_begin", "base64", 0, #restored)
     local decoded, native = base64_decode(restored)
