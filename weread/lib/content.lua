@@ -5,6 +5,14 @@ local logger = require("weread.lib.logger")
 local PW2Profile = require("weread.lib.pw2_profile")
 
 local Content = {}
+local native_base64
+do
+    local ok, mime = pcall(require, "mime")
+    if ok and type(mime.unb64) == "function" then
+        local decoded_ok, decoded = pcall(mime.unb64, "AAEC/w==")
+        if decoded_ok and decoded == string.char(0, 1, 2, 255) then native_base64 = mime.unb64 end
+    end
+end
 local b64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 -- Forward declarations used by the resumable-download checkpoint helpers.
 local xml_escape
@@ -730,6 +738,10 @@ local function base64_decode(data)
         data = data .. string.rep("=", 4 - pad)
     end
     data = data:gsub("[^" .. b64chars .. "=]", "")
+    if native_base64 then
+        local ok, decoded = pcall(native_base64, data)
+        if ok and type(decoded) == "string" then return decoded, 1 end
+    end
     return (data:gsub(".", function(char)
         if char == "=" then
             return ""
@@ -816,8 +828,8 @@ local function decode_encoded_body(body)
     local restored = reverse_swaps(encoded, swap_positions(encoded))
     PW2Profile.finish("reverse_swaps", profile_swaps, { bytes = #encoded })
     local profile_base64 = PW2Profile.start()
-    local decoded = base64_decode(restored)
-    PW2Profile.finish("base64_decode", profile_base64, { bytes = #restored, output_bytes = #decoded })
+    local decoded, native = base64_decode(restored)
+    PW2Profile.finish("base64_decode", profile_base64, { bytes = #restored, output_bytes = #decoded, native = native or 0 })
     return decoded
 end
 
